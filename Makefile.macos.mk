@@ -122,18 +122,24 @@ gum-macos: build/frida-macos-i386/lib/pkgconfig/frida-gum-1.0.pc build/frida-mac
 gum-ios: build/frida-ios-arm/lib/pkgconfig/frida-gum-1.0.pc build/frida-ios-arm64/lib/pkgconfig/frida-gum-1.0.pc ##@gum Build for iOS
 gum-android: build/frida-android-arm/lib/pkgconfig/frida-gum-1.0.pc build/frida-android-arm64/lib/pkgconfig/frida-gum-1.0.pc ##@gum Build for Android
 
-build/frida-gum-autogen-stamp: build/frida-env-macos-$(build_arch).rc frida-gum/configure.ac
+build/frida-gum-npm-stamp: build/frida-env-macos-$(build_arch).rc
 	@$(NPM) --version &>/dev/null || (echo "\033[31mOops. It appears Node.js is not installed.\nWe need it for processing JavaScript code at build-time.\nCheck PATH or set NODE to the absolute path of your Node.js binary.\033[0m"; exit 1;)
-	. build/frida-env-macos-$(build_arch).rc && cd frida-gum && ./autogen.sh
+	. build/frida-env-macos-$(build_arch).rc && cd frida-gum/bindings/gumjs && npm install
 	@touch -c $@
 
-build/tmp-%/frida-gum/Makefile: build/frida-env-%.rc build/frida-gum-autogen-stamp build/frida-%/lib/pkgconfig/capstone.pc
-	mkdir -p $(@D)
-	. build/frida-env-$*.rc && cd $(@D) && ../../../frida-gum/configure
-
-build/frida-%/lib/pkgconfig/frida-gum-1.0.pc: build/tmp-%/frida-gum/Makefile build/frida-gum-submodule-stamp
-	@$(call ensure_relink,frida-gum/gum/gum.c,build/tmp-$*/frida-gum/gum/libfrida_gum_la-gum.lo)
-	. build/frida-env-$*.rc && make -C build/tmp-$*/frida-gum install
+build/frida-%/lib/pkgconfig/frida-gum-1.0.pc: build/frida-env-%.rc build/frida-gum-submodule-stamp build/frida-gum-npm-stamp build/frida-%/lib/pkgconfig/capstone.pc
+	. build/frida-meson-env-macos-$(build_arch).rc; \
+	builddir=build/tmp-$*/frida-gum; \
+	if [ ! -f $$builddir/build.ninja ]; then \
+		mkdir -p $$builddir; \
+		$(MESON) \
+			--prefix $(FRIDA)/build/frida-$* \
+			--default-library static \
+			--cross-file build/frida-$*.txt \
+			$(FRIDA_MESON_FLAGS) \
+			frida-gum $$builddir || exit 1; \
+	fi; \
+	$(NINJA) -C $$builddir install || exit 1
 	@touch -c $@
 
 check-gum-macos: build/frida-macos-i386/lib/pkgconfig/frida-gum-1.0.pc build/frida-macos-x86_64/lib/pkgconfig/frida-gum-1.0.pc ##@gum Run tests for Mac
@@ -155,16 +161,23 @@ build/tmp_thin-%/frida-core/Makefile: build/frida-env-%.rc frida-core/configure 
 	mkdir -p $(@D)
 	. build/frida-env-$*.rc && cd $(@D) && ../../../frida-core/configure --prefix=$(abspath build/frida_thin-$*)
 
-build/frida-macos-%/lib/pkgconfig/frida-core-1.0.pc: build/tmp_stripped-macos-x86_64/frida-core/src/frida-helper build/tmp-macos-universal/frida-core/lib/agent/.libs/libfrida-agent.dylib
-	@$(call ensure_relink,frida-core/src/frida.c,build/tmp-macos-$*/frida-core/src/libfrida_core_la-frida.lo)
-	. build/frida-env-macos-$*.rc \
-		&& cd build/tmp-macos-$*/frida-core \
-		&& make -C src install \
-			RESOURCE_COMPILER="\"$(FRIDA)/releng/frida-resource-compiler-macos-$(build_arch)\" --toolchain=apple" \
-			HELPER=../../../../build/tmp_stripped-macos-x86_64/frida-core/src/frida-helper \
-			AGENT=../../../../build/tmp-macos-universal/frida-core/lib/agent/.libs/libfrida-agent.dylib!frida-agent.dylib \
-		&& make install-data-am
+build/frida-macos-i386/lib/pkgconfig/frida-core-1.0.pc: build/tmp-macos-x86_64/frida-core/src/frida-helper build/tmp-macos-x86_64/frida-core/lib/agent/frida-agent.dylib
+	. build/frida-meson-env-macos-$(build_arch).rc; \
+	builddir=build/tmp-$*/frida-core; \
+	if [ ! -f $$builddir/build.ninja ]; then \
+		mkdir -p $$builddir; \
+		$(MESON) \
+			--prefix $(FRIDA)/build/frida-$* \
+			--default-library static \
+			--cross-file build/frida-$*.txt \
+			$(FRIDA_MESON_FLAGS) \
+			--with-other-
+			frida-core $$builddir || exit 1; \
+	fi; \
+	$(NINJA) -C $$builddir install || exit 1
 	@touch -c $@
+build/frida-macos-x86_64/lib/pkgconfig/frida-core-1.0.pc: build/tmp-macos-x86_64/frida-core/src/frida-helper build/tmp-macos-i386/frida-core/lib/agent/frida-agent.dylib
+	echo TODO
 build/frida-ios-arm/lib/pkgconfig/frida-core-1.0.pc: build/tmp-ios-universal/frida-core/src/frida-helper build/tmp-ios-universal/frida-core/lib/agent/.libs/libfrida-agent.dylib
 	@$(call ensure_relink,frida-core/src/frida.c,build/tmp-ios-arm/frida-core/src/libfrida_core_la-frida.lo)
 	. build/frida-env-ios-arm.rc \
